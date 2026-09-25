@@ -17,6 +17,41 @@ app.use(cors())
 app.use(express.json())
 
 // ==========================================
+// GEOCODIFICAR DIRECCIÓN
+// ==========================================
+
+async function obtenerCoordenadas(direccion) {
+  const direccionCompleta =
+    `${direccion}, Neiva, Huila, Colombia`
+
+  const url =
+    `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=co&q=${encodeURIComponent(direccionCompleta)}`
+
+  const respuesta = await fetch(url, {
+    headers: {
+      'User-Agent': 'DomiciliosApp-Microfarma/1.0',
+    },
+  })
+
+  if (!respuesta.ok) {
+    throw new Error(
+      `Error geocodificando dirección: HTTP ${respuesta.status}`
+    )
+  }
+
+  const datos = await respuesta.json()
+
+  if (!datos.length) {
+    return null
+  }
+
+  return {
+    latitud: Number(datos[0].lat),
+    longitud: Number(datos[0].lon),
+  }
+}
+
+// ==========================================
 // API PRINCIPAL
 // ==========================================
 
@@ -36,6 +71,8 @@ app.get('/api/domicilios', async (req, res) => {
       SELECT
         d.id,
         d.direccion,
+        d.latitud,
+        d.longitud,
         d.estado,
         d.metodo_pago,
         d.valor_pedido,
@@ -124,6 +161,23 @@ app.post('/api/domicilios', async (req, res) => {
     await conexion.query('BEGIN')
 
     // ========================================
+    // OBTENER COORDENADAS DE LA DIRECCIÓN
+    // ========================================
+
+    const coordenadas = await obtenerCoordenadas(
+      direccion
+    )
+
+    if (!coordenadas) {
+      await conexion.query('ROLLBACK')
+
+      return res.status(400).json({
+        mensaje:
+          'No se pudo encontrar la ubicación de la dirección. Verifica la dirección e inténtalo nuevamente.',
+      })
+    }
+
+    // ========================================
     // BUSCAR O CREAR CLIENTE
     // ========================================
 
@@ -171,6 +225,8 @@ app.post('/api/domicilios', async (req, res) => {
           cliente_id,
           domiciliario_id,
           direccion,
+          latitud,
+          longitud,
           estado,
           metodo_pago,
           valor_pedido,
@@ -182,11 +238,13 @@ app.post('/api/domicilios', async (req, res) => {
           $2,
           $3,
           $4,
-          'PENDIENTE',
           $5,
           $6,
+          'PENDIENTE',
           $7,
-          $8
+          $8,
+          $9,
+          $10
         )
         RETURNING *
       `,
@@ -195,6 +253,8 @@ app.post('/api/domicilios', async (req, res) => {
         clienteId,
         domiciliario_id || null,
         direccion,
+        coordenadas.latitud,
+        coordenadas.longitud,
         metodo_pago || null,
         valor_pedido || null,
         valor_domicilio || null,
