@@ -1,0 +1,213 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f4f6f8;
+}
+
+.app {
+  min-height: 100vh;
+}
+
+.header {
+  background: #ffffff;
+  padding: 20px 30px;
+  border-bottom: 1px solid #ddd;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 26px;
+}
+
+.header p {
+  margin: 6px 0 0;
+  color: #666;
+}
+
+.contenido {
+  padding: 25px;
+}
+
+.panel {
+  background: white;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.panel h2 {
+  margin-top: 0;
+}
+
+.mapa {
+  width: 100%;
+  height: 600px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.controles {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.controles button {
+  padding: 10px 16px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  background: white;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.controles button.activo {
+  background: #1f6feb;
+  color: white;
+  border-color: #1f6feb;
+}
+
+.estado {
+  padding: 10px;
+  background: #f1f5f9;
+  border-radius: 8px;
+}
+
+.error {
+  padding: 10px;
+  background: #fee2e2;
+  color: #991b1b;
+  border-radius: 8px;
+}
+.panel-domiciliarios {
+  margin-bottom: 20px;
+}
+
+.panel-domiciliarios h3 {
+  margin: 0 0 12px;
+}
+
+.domiciliario-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px;
+  margin-bottom: 10px;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.domiciliario-card p {
+  margin: 4px 0 0;
+  color: #666;
+  font-size: 14px;
+}
+
+.estado-online {
+  color: #15803d;
+  font-weight: bold;
+}
+.estado-offline {
+  color: #dc2626;
+  font-weight: bold;
+}
+
+.cabecera-domicilios {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.cabecera-domicilios h2 {
+  margin: 0;
+}
+
+.boton-nuevo,
+.boton-crear {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.boton-nuevo {
+  background: #1f6feb;
+  color: white;
+}
+
+.boton-crear {
+  background: #15803d;
+  color: white;
+  margin-top: 10px;
+}
+
+.formulario-domicilio {
+  display: grid;
+  gap: 14px;
+  max-width: 600px;
+}
+
+.formulario-domicilio label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: bold;
+}
+
+.formulario-domicilio input,
+.formulario-domicilio select {
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-size: 14px;
+}
+.lista-domicilios {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.domicilio-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.domicilio-card p {
+  margin: 6px 0;
+  font-size: 14px;
+}
+
+.domicilio-info {
+  min-width: 180px;
+  text-align: right;
+}
+
+.estado-pendiente {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 20px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 13px;
+  font-weight: bold;
+}
+.selector-estado {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+}
