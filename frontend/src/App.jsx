@@ -94,6 +94,48 @@ function App() {
 
   const domiciliarioNombre = `Domiciliario ${domiciliarioId}`
 
+  // Eliminar domicilio
+  const eliminarDomicilio = async (id) => {
+    const confirmar = window.confirm(
+      `¿Seguro que quieres eliminar el domicilio #${id}?`
+    )
+
+    if (!confirmar) {
+      return
+    }
+
+    try {
+      const respuesta = await fetch(
+        `https://domicilios-app-kfj4.onrender.com/api/domicilios/${id}`,
+        {
+          method: 'DELETE',
+        }
+      )
+
+      const datos = await respuesta.json()
+
+      if (!respuesta.ok) {
+        throw new Error(
+          datos.mensaje || 'No se pudo eliminar el domicilio'
+        )
+      }
+
+      setDomicilios((actuales) =>
+        actuales.filter((domicilio) => domicilio.id !== id)
+      )
+
+      if (domicilioActivo === id) {
+        setDomicilioActivo(null)
+      }
+    } catch (error) {
+      console.error('Error eliminando domicilio:', error)
+
+      alert(
+        error.message || 'No se pudo eliminar el domicilio'
+      )
+    }
+  }
+
   // Consultar turno activo
   useEffect(() => {
     const consultarTurno = async () => {
@@ -929,6 +971,14 @@ function App() {
                             CANCELADO
                           </option>
                         </select>
+
+                        <button
+                          type="button"
+                          className="boton-eliminar"
+                          onClick={() => eliminarDomicilio(domicilio.id)}
+                        >
+                           Eliminar
+                        </button>
                       </div>
                     </div>
                   )

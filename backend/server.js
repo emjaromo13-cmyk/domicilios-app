@@ -342,6 +342,43 @@ app.patch('/api/domicilios/:id/estado', async (req, res) => {
   }
 })
 
+// =========================
+// ELIMINAR DOMICILIO
+// =========================
+
+app.delete('/api/domicilios/:id', async (req, res) => {
+  const { id } = req.params
+
+  try {
+    const resultado = await pool.query(
+      `
+        DELETE FROM domicilios
+        WHERE id = $1
+        RETURNING id
+      `,
+      [id]
+    )
+
+    if (resultado.rowCount === 0) {
+      return res.status(404).json({
+        mensaje: 'Domicilio no encontrado',
+      })
+    }
+
+    res.json({
+      mensaje: 'Domicilio eliminado correctamente',
+      id: resultado.rows[0].id,
+    })
+  } catch (error) {
+    console.error('Error eliminando domicilio:', error)
+
+    res.status(500).json({
+      mensaje: 'No se pudo eliminar el domicilio',
+      error: error.message,
+    })
+  }
+})
+
 // ==========================================
 // OBTENER SEDES
 // ==========================================
