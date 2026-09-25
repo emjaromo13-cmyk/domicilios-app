@@ -349,8 +349,22 @@ app.patch('/api/domicilios/:id/estado', async (req, res) => {
 app.delete('/api/domicilios/:id', async (req, res) => {
   const { id } = req.params
 
+  const conexion = await pool.connect()
+
   try {
-    const resultado = await pool.query(
+    await conexion.query('BEGIN')
+
+    // Primero eliminar las ubicaciones relacionadas
+    await conexion.query(
+      `
+        DELETE FROM ubicaciones
+        WHERE domicilio_id = $1
+      `,
+      [id]
+    )
+
+    // Después eliminar el domicilio
+    const resultado = await conexion.query(
       `
         DELETE FROM domicilios
         WHERE id = $1
@@ -360,22 +374,30 @@ app.delete('/api/domicilios/:id', async (req, res) => {
     )
 
     if (resultado.rowCount === 0) {
+      await conexion.query('ROLLBACK')
+
       return res.status(404).json({
         mensaje: 'Domicilio no encontrado',
       })
     }
+
+    await conexion.query('COMMIT')
 
     res.json({
       mensaje: 'Domicilio eliminado correctamente',
       id: resultado.rows[0].id,
     })
   } catch (error) {
+    await conexion.query('ROLLBACK')
+
     console.error('Error eliminando domicilio:', error)
 
     res.status(500).json({
       mensaje: 'No se pudo eliminar el domicilio',
       error: error.message,
     })
+  } finally {
+    conexion.release()
   }
 })
 
