@@ -5,13 +5,35 @@ import {
   TileLayer,
   Marker,
   Popup,
+  Polyline,
   useMap,
 } from 'react-leaflet'
 
 import 'leaflet/dist/leaflet.css'
 import './App.css'
 
+import L from 'leaflet'
+
 const socket = io('https://domicilios-app-kfj4.onrender.com')
+
+const crearIconoMoto = (nombre) =>
+  L.divIcon({
+    className: 'icono-moto',
+    html: `
+      <div class="moto-contenedor">
+        <div class="moto-marker">
+          🛵
+        </div>
+
+        <div class="nombre-moto">
+          ${nombre}
+        </div>
+      </div>
+    `,
+    iconSize: [140, 65],
+    iconAnchor: [70, 23],
+    popupAnchor: [0, -28],
+  })
 
 function CentrarMapa({ posicion }) {
   const map = useMap()
@@ -27,6 +49,7 @@ function CentrarMapa({ posicion }) {
 
 function App() {
   const [posicionesDomiciliarios, setPosicionesDomiciliarios] = useState({})
+  const [rutasDomiciliarios, setRutasDomiciliarios] = useState({})
   const [posicion, setPosicion] = useState(null)
   const [precision, setPrecision] = useState(null)
   const [error, setError] = useState(null)
@@ -292,6 +315,29 @@ function App() {
             [ubicacion.domiciliario_id]:
               ubicacion,
           })
+        )
+
+        setRutasDomiciliarios(
+          (rutasActuales) => {
+            const rutaActual =
+              rutasActuales[
+                ubicacion.domiciliario_id
+              ] || []
+
+            const nuevaRuta = [
+              ...rutaActual,
+              [
+                ubicacion.latitud,
+                ubicacion.longitud,
+              ],
+            ]
+
+            return {
+              ...rutasActuales,
+              [ubicacion.domiciliario_id]:
+                nuevaRuta.slice(-500),
+            }
+          }
         )
 
         if (
@@ -769,18 +815,18 @@ function App() {
                           </strong>{' '}
                           {domicilio.direccion}
                         </p>
-                        
-  <p>
-  <strong>
-    Sede de origen:
-  </strong>{' '}
-  {
-    sedes.find(
-      (sede) =>
-        sede.id === Number(domicilio.sede_id)
-    )?.nombre || 'Sin sede'
-  }
-</p>
+
+                        <p>
+                          <strong>
+                            Sede de origen:
+                          </strong>{' '}
+                          {
+                            sedes.find(
+                              (sede) =>
+                                sede.id === Number(domicilio.sede_id)
+                            )?.nombre || 'Sin sede'
+                          }
+                        </p>
                       </div>
 
                       <div className="domicilio-info">
@@ -1230,6 +1276,37 @@ function App() {
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
 
+              {Object.entries(
+                rutasDomiciliarios
+              ).map(
+                ([domiciliarioId, ruta]) => {
+                  const colores = [
+                    '#2563eb',
+                    '#16a34a',
+                    '#f59e0b',
+                    '#dc2626',
+                  ]
+
+                  const color =
+                    colores[
+                      (Number(domiciliarioId) - 1) %
+                        colores.length
+                    ]
+
+                  return (
+                    <Polyline
+                      key={`ruta-${domiciliarioId}`}
+                      positions={ruta}
+                      pathOptions={{
+                        color,
+                        weight: 5,
+                        opacity: 0.75,
+                      }}
+                    />
+                  )
+                }
+              )}
+
               {Object.values(
                 posicionesDomiciliarios
               ).map(
@@ -1242,6 +1319,9 @@ function App() {
                       domiciliario.latitud,
                       domiciliario.longitud,
                     ]}
+                    icon={crearIconoMoto(
+                      domiciliario.nombre
+                    )}
                   >
                     <Popup>
 
