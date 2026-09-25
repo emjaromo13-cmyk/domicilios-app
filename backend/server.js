@@ -25,7 +25,7 @@ async function obtenerCoordenadas(direccion) {
     `${direccion}, Neiva, Huila, Colombia`
 
   const url =
-    `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=co&q=${encodeURIComponent(direccionCompleta)}`
+    `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=1&countrycodes=co&q=${encodeURIComponent(direccionCompleta)}`
 
   const respuesta = await fetch(url, {
     headers: {
@@ -45,9 +45,16 @@ async function obtenerCoordenadas(direccion) {
     return null
   }
 
+  const resultado = datos[0]
+
   return {
-    latitud: Number(datos[0].lat),
-    longitud: Number(datos[0].lon),
+    latitud: Number(resultado.lat),
+    longitud: Number(resultado.lon),
+    barrio:
+      resultado.address?.neighbourhood ||
+      resultado.address?.suburb ||
+      resultado.address?.quarter ||
+      null,
   }
 }
 
@@ -73,6 +80,7 @@ app.get('/api/domicilios', async (req, res) => {
         d.direccion,
         d.latitud,
         d.longitud,
+        d.barrio,
         d.estado,
         d.metodo_pago,
         d.valor_pedido,
@@ -218,7 +226,7 @@ app.post('/api/domicilios', async (req, res) => {
     const trackingToken =
       `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`
 
-    const nuevoDomicilio = await conexion.query(
+    const resultado = await conexion.query(
       `
         INSERT INTO domicilios (
           sede_id,
@@ -227,6 +235,7 @@ app.post('/api/domicilios', async (req, res) => {
           direccion,
           latitud,
           longitud,
+          barrio,
           estado,
           metodo_pago,
           valor_pedido,
@@ -240,11 +249,12 @@ app.post('/api/domicilios', async (req, res) => {
           $4,
           $5,
           $6,
-          'PENDIENTE',
           $7,
+          'PENDIENTE',
           $8,
           $9,
-          $10
+          $10,
+          $11
         )
         RETURNING *
       `,
@@ -255,6 +265,7 @@ app.post('/api/domicilios', async (req, res) => {
         direccion,
         coordenadas.latitud,
         coordenadas.longitud,
+        coordenadas.barrio,
         metodo_pago || null,
         valor_pedido || null,
         valor_domicilio || null,
@@ -264,7 +275,7 @@ app.post('/api/domicilios', async (req, res) => {
 
     await conexion.query('COMMIT')
 
-    res.status(201).json(nuevoDomicilio.rows[0])
+    res.status(201).json(resultado.rows[0])
   } catch (error) {
     await conexion.query('ROLLBACK')
 
@@ -279,6 +290,7 @@ app.post('/api/domicilios', async (req, res) => {
     conexion.release()
   }
 })
+
 // ==========================================
 // ACTUALIZAR ESTADO DEL DOMICILIO
 // ==========================================
@@ -329,6 +341,7 @@ app.patch('/api/domicilios/:id/estado', async (req, res) => {
     })
   }
 })
+
 // ==========================================
 // OBTENER SEDES
 // ==========================================

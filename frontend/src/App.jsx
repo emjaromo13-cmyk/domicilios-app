@@ -35,6 +35,19 @@ const crearIconoMoto = (nombre) =>
     popupAnchor: [0, -28],
   })
 
+const crearIconoPedido = () =>
+  L.divIcon({
+    className: 'icono-pedido',
+    html: `
+      <div class="pedido-marker">
+        <span>📍</span>
+      </div>
+    `,
+    iconSize: [40, 40],
+    iconAnchor: [20, 40],
+    popupAnchor: [0, -40],
+  })
+
 function CentrarMapa({ posicion }) {
   const map = useMap()
 
@@ -1355,6 +1368,70 @@ function App() {
                   </Marker>
                 )
               )}
+
+              {/* ========================= */}
+              {/* PEDIDOS EN EL MAPA */}
+              {/* ========================= */}
+
+              {domicilios
+                .filter(
+                  (domicilio) =>
+                    domicilio.latitud != null &&
+                    domicilio.longitud != null &&
+                    domicilio.estado !== 'ENTREGADO' &&
+                    domicilio.estado !== 'CANCELADO'
+                )
+                .map((domicilio) => (
+                  <Marker
+                    key={`domicilio-${domicilio.id}`}
+                    position={[
+                      Number(domicilio.latitud),
+                      Number(domicilio.longitud),
+                    ]}
+                    icon={crearIconoPedido()}
+                  >
+                    <Popup>
+                      <strong>
+                        Domicilio #{domicilio.id}
+                      </strong>
+
+                      <br />
+
+                      Cliente:{' '}
+                      {domicilio.cliente}
+
+                      <br />
+
+                      Teléfono:{' '}
+                      {domicilio.telefono}
+
+                      <br />
+
+                      Dirección:{' '}
+                      {domicilio.direccion}
+
+                      <br />
+
+                      Barrio:{' '}
+                      {domicilio.barrio || 'No disponible'}
+
+                      <br />
+
+                      Sede:{' '}
+                      {domicilio.sede}
+
+                      <br />
+
+                      Estado:{' '}
+                      {domicilio.estado}
+
+                      <br />
+
+                      Domiciliario:{' '}
+                      {domicilio.domiciliario || 'Sin asignar'}
+                    </Popup>
+                  </Marker>
+                ))}
 
             </MapContainer>
 
