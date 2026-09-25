@@ -219,7 +219,56 @@ app.post('/api/domicilios', async (req, res) => {
     conexion.release()
   }
 })
+// ==========================================
+// ACTUALIZAR ESTADO DEL DOMICILIO
+// ==========================================
 
+app.patch('/api/domicilios/:id/estado', async (req, res) => {
+  const { id } = req.params
+  const { estado } = req.body
+
+  const estadosPermitidos = [
+    'PENDIENTE',
+    'ASIGNADO',
+    'EN CAMINO',
+    'ENTREGADO',
+    'CANCELADO',
+  ]
+
+  if (!estadosPermitidos.includes(estado)) {
+    return res.status(400).json({
+      mensaje: 'Estado no válido',
+    })
+  }
+
+  try {
+    const resultado = await pool.query(
+      `
+        UPDATE domicilios
+        SET estado = $1
+        WHERE id = $2
+        RETURNING *
+      `,
+      [estado, id]
+    )
+
+    if (resultado.rows.length === 0) {
+      return res.status(404).json({
+        mensaje: 'Domicilio no encontrado',
+      })
+    }
+
+    res.json(resultado.rows[0])
+  } catch (error) {
+    console.error('Error actualizando estado del domicilio:')
+    console.error(error)
+
+    res.status(500).json({
+      mensaje: 'No se pudo actualizar el estado',
+      error: error.message,
+    })
+  }
+})
 // ==========================================
 // OBTENER SEDES
 // ==========================================
