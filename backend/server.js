@@ -19,13 +19,12 @@ app.use(express.json())
 // ==========================================
 // GEOCODIFICAR DIRECCIÓN
 // ==========================================
-
-async function obtenerCoordenadas(direccion) {
+async function obtenerCoordenadas(direccion, barrio) {
   const direccionCompleta =
-    `${direccion}, Neiva, Huila, Colombia`
+    `${direccion}, ${barrio}, Neiva, Huila, Colombia`
 
   const url =
-    `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=1&countrycodes=co&q=${encodeURIComponent(direccionCompleta)}`
+    `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&addressdetails=1&countrycodes=co&q=${encodeURIComponent(direccionCompleta)}`
 
   const respuesta = await fetch(url, {
     headers: {
@@ -45,18 +44,37 @@ async function obtenerCoordenadas(direccion) {
     return null
   }
 
-  const resultado = datos[0]
+  const barrioBuscado = barrio.trim().toLowerCase()
+
+  const resultadoConBarrio =
+    datos.find((resultado) => {
+      const barriosResultado = [
+        resultado.address?.neighbourhood,
+        resultado.address?.suburb,
+        resultado.address?.quarter,
+      ]
+        .filter(Boolean)
+        .map((valor) =>
+          valor.toLowerCase()
+        )
+
+      return barriosResultado.some((valor) =>
+        valor.includes(barrioBuscado) ||
+        barrioBuscado.includes(valor)
+      )
+    }) || datos[0]
 
   return {
-    latitud: Number(resultado.lat),
-    longitud: Number(resultado.lon),
+    latitud: Number(resultadoConBarrio.lat),
+    longitud: Number(resultadoConBarrio.lon),
     barrio:
-      resultado.address?.neighbourhood ||
-      resultado.address?.suburb ||
-      resultado.address?.quarter ||
-      null,
+      resultadoConBarrio.address?.neighbourhood ||
+      resultadoConBarrio.address?.suburb ||
+      resultadoConBarrio.address?.quarter ||
+      barrio,
   }
 }
+
 
 // ==========================================
 // API PRINCIPAL
@@ -136,6 +154,123 @@ app.get('/api/domicilios', async (req, res) => {
 })
 
 // ==========================================
+// SEGUIMIENTO PÚBLICO DE DOMICILIO
+// ==========================================
+
+app.get('/api/tracking/:token', async (req, res) => {
+  const { token } = req.params
+
+  if (!token) {
+    return res.status(400).json({
+      mensaje: 'Token de seguimiento obligatorio',
+    })
+  }
+
+  try {
+    const resultado = await pool.query(
+      `
+        SELECT
+          d.id,
+          d.direccion,
+          d.latitud,
+          d.longitud,
+          d.barrio,
+          d.estado,
+          d.tracking_token,
+          d.creado_en,
+          d.asignado_en,
+          d.aceptado_en,
+          d.inicio_en,
+          d.llegada_en,
+          d.entregado_en,
+
+          c.nombre AS cliente,
+
+          s.nombre AS sede,
+
+          z.nombre AS zona,
+
+          dom.id AS domiciliario_id,
+          dom.nombre AS domiciliario
+
+        FROM domicilios d
+
+        INNER JOIN clientes c
+          ON d.cliente_id = c.id
+
+        INNER JOIN sedes s
+          ON d.sede_id = s.id
+
+        INNER JOIN zonas z
+          ON s.zona_id = z.id
+
+        LEFT JOIN domiciliarios dom
+          ON d.domiciliario_id = dom.id
+
+        WHERE d.tracking_token = $1
+
+        LIMIT 1
+      `,
+      [token]
+    )
+
+    if (resultado.rows.length === 0) {
+      return res.status(404).json({
+        mensaje: 'Seguimiento no encontrado',
+      })
+    }
+
+    const domicilio = resultado.rows[0]
+
+    // Última ubicación conocida del domiciliario
+    const ubicacion = await pool.query(
+      `
+        SELECT
+          latitud,
+          longitud,
+          precision_m,
+          fecha_hora
+        FROM ubicaciones
+        WHERE domicilio_id = $1
+        ORDER BY fecha_hora DESC
+        LIMIT 1
+      `,
+      [domicilio.id]
+    )
+
+    res.json({
+      domicilio: {
+        id: domicilio.id,
+        cliente: domicilio.cliente,
+        direccion: domicilio.direccion,
+        barrio: domicilio.barrio,
+        sede: domicilio.sede,
+        zona: domicilio.zona,
+        estado: domicilio.estado,
+        domiciliario: domicilio.domiciliario,
+        domiciliario_id: domicilio.domiciliario_id,
+        creado_en: domicilio.creado_en,
+        asignado_en: domicilio.asignado_en,
+        aceptado_en: domicilio.aceptado_en,
+        inicio_en: domicilio.inicio_en,
+        llegada_en: domicilio.llegada_en,
+        entregado_en: domicilio.entregado_en,
+      },
+
+      ubicacion: ubicacion.rows[0] || null,
+    })
+  } catch (error) {
+    console.error('Error obteniendo seguimiento público:')
+    console.error(error)
+
+    res.status(500).json({
+      mensaje: 'No se pudo obtener el seguimiento',
+      error: error.message,
+    })
+  }
+})
+
+// ==========================================
 // CREAR DOMICILIO
 // ==========================================
 
@@ -144,6 +279,9 @@ app.post('/api/domicilios', async (req, res) => {
     cliente,
     telefono,
     direccion,
+    barrio,
+    latitud,
+    longitud,
     sede_id,
     domiciliario_id,
     metodo_pago,
@@ -155,11 +293,12 @@ app.post('/api/domicilios', async (req, res) => {
     !cliente ||
     !telefono ||
     !direccion ||
+    !barrio ||
     !sede_id
   ) {
     return res.status(400).json({
       mensaje:
-        'Cliente, teléfono, dirección y sede son obligatorios',
+        'Cliente, teléfono, dirección, barrio y sede son obligatorios',
     })
   }
 
@@ -171,10 +310,25 @@ app.post('/api/domicilios', async (req, res) => {
     // ========================================
     // OBTENER COORDENADAS DE LA DIRECCIÓN
     // ========================================
+    let coordenadas
 
-    const coordenadas = await obtenerCoordenadas(
-      direccion
-    )
+    if (
+      latitud !== undefined &&
+      longitud !== undefined &&
+      latitud !== '' &&
+      longitud !== ''
+    ) {
+      coordenadas = {
+        latitud: Number(latitud),
+        longitud: Number(longitud),
+      }
+    } else {
+      coordenadas =
+        await obtenerCoordenadas(
+          direccion,
+          barrio
+        )
+    }
 
     if (!coordenadas) {
       await conexion.query('ROLLBACK')
@@ -265,7 +419,7 @@ app.post('/api/domicilios', async (req, res) => {
         direccion,
         coordenadas.latitud,
         coordenadas.longitud,
-        coordenadas.barrio,
+        barrio,
         metodo_pago || null,
         valor_pedido || null,
         valor_domicilio || null,
@@ -314,14 +468,52 @@ app.patch('/api/domicilios/:id/estado', async (req, res) => {
   }
 
   try {
-    const resultado = await pool.query(
+    let campoHora = null
+
+    if (estado === 'ASIGNADO') {
+      campoHora = 'asignado_en'
+    }
+
+    if (estado === 'EN CAMINO') {
+      campoHora = 'inicio_en'
+    }
+
+    if (estado === 'ENTREGADO') {
+      campoHora = 'entregado_en'
+    }
+
+    if (estado === 'CANCELADO') {
+      campoHora = 'cancelado_en'
+    }
+
+    let consulta
+    let parametros
+
+    if (campoHora) {
+      consulta = `
+        UPDATE domicilios
+        SET
+          estado = $1,
+          ${campoHora} = COALESCE(${campoHora}, NOW())
+        WHERE id = $2
+        RETURNING *
       `
+
+      parametros = [estado, id]
+    } else {
+      consulta = `
         UPDATE domicilios
         SET estado = $1
         WHERE id = $2
         RETURNING *
-      `,
-      [estado, id]
+      `
+
+      parametros = [estado, id]
+    }
+
+    const resultado = await pool.query(
+      consulta,
+      parametros
     )
 
     if (resultado.rows.length === 0) {
@@ -332,11 +524,175 @@ app.patch('/api/domicilios/:id/estado', async (req, res) => {
 
     res.json(resultado.rows[0])
   } catch (error) {
-    console.error('Error actualizando estado del domicilio:')
+    console.error(
+      'Error actualizando estado del domicilio:'
+    )
+
     console.error(error)
 
     res.status(500).json({
       mensaje: 'No se pudo actualizar el estado',
+      error: error.message,
+    })
+  }
+})
+
+// ==========================================
+// ASIGNAR DOMICILIARIO A DOMICILIO
+// ==========================================
+
+app.patch('/api/domicilios/:id/asignar', async (req, res) => {
+  const { id } = req.params
+  const { domiciliario_id } = req.body
+
+  if (!domiciliario_id) {
+    return res.status(400).json({
+      mensaje: 'El domiciliario_id es obligatorio',
+    })
+  }
+
+  try {
+    // ==========================================
+    // VERIFICAR DOMICILIARIO
+    // ==========================================
+
+    const domiciliario = await pool.query(
+      `
+        SELECT
+          d.id,
+          d.nombre,
+          d.activo,
+          d.zona_id
+        FROM domiciliarios d
+        WHERE d.id = $1
+        LIMIT 1
+      `,
+      [domiciliario_id]
+    )
+
+    if (domiciliario.rows.length === 0) {
+      return res.status(404).json({
+        mensaje: 'Domiciliario no encontrado',
+      })
+    }
+
+    const datosDomiciliario =
+      domiciliario.rows[0]
+
+    if (!datosDomiciliario.activo) {
+      return res.status(400).json({
+        mensaje: 'El domiciliario está inactivo',
+      })
+    }
+
+    // ==========================================
+    // VERIFICAR DOMICILIO Y ZONA
+    // ==========================================
+
+    const domicilio = await pool.query(
+      `
+        SELECT
+          d.id,
+          d.estado,
+          d.sede_id,
+          s.zona_id
+        FROM domicilios d
+        INNER JOIN sedes s
+          ON s.id = d.sede_id
+        WHERE d.id = $1
+        LIMIT 1
+      `,
+      [id]
+    )
+
+    if (domicilio.rows.length === 0) {
+      return res.status(404).json({
+        mensaje: 'Domicilio no encontrado',
+      })
+    }
+
+    const datosDomicilio =
+      domicilio.rows[0]
+
+    // ==========================================
+    // VALIDAR MISMA ZONA
+    // ==========================================
+
+    if (
+      Number(datosDomicilio.zona_id) !==
+      Number(datosDomiciliario.zona_id)
+    ) {
+      return res.status(400).json({
+        mensaje:
+          'El domiciliario no pertenece a la misma zona de la sede del domicilio',
+      })
+    }
+
+    // ==========================================
+    // VALIDAR TURNO ACTIVO
+    // ==========================================
+
+    const turnoActivo = await pool.query(
+      `
+        SELECT
+          id,
+          hora_inicio
+        FROM turnos
+        WHERE domiciliario_id = $1
+          AND estado = 'EN TURNO'
+          AND hora_fin IS NULL
+        ORDER BY hora_inicio DESC
+        LIMIT 1
+      `,
+      [domiciliario_id]
+    )
+
+    if (turnoActivo.rows.length === 0) {
+      return res.status(400).json({
+        mensaje:
+          'El domiciliario no tiene un turno activo',
+      })
+    }
+
+    // ==========================================
+    // ASIGNAR DOMICILIARIO
+    // ==========================================
+
+    const resultado = await pool.query(
+      `
+        UPDATE domicilios
+        SET
+          domiciliario_id = $1,
+          estado = 'ASIGNADO',
+          asignado_en = COALESCE(asignado_en, NOW())
+        WHERE id = $2
+        RETURNING *
+      `,
+      [domiciliario_id, id]
+    )
+
+    if (resultado.rows.length === 0) {
+      return res.status(404).json({
+        mensaje:
+          'No se pudo actualizar el domicilio',
+      })
+    }
+
+    res.json({
+      mensaje:
+        'Domiciliario asignado correctamente',
+      domicilio:
+        resultado.rows[0],
+    })
+  } catch (error) {
+    console.error(
+      'Error asignando domiciliario:'
+    )
+    console.error(error)
+
+    res.status(500).json({
+      mensaje:
+        'No se pudo asignar el domiciliario',
       error: error.message,
     })
   }
@@ -601,6 +957,376 @@ app.post('/api/turnos/finalizar', async (req, res) => {
 })
 
 // ==========================================
+// HISTORIAL DE TURNOS
+// ==========================================
+
+app.get('/api/turnos/historial/:domiciliario_id', async (req, res) => {
+  const { domiciliario_id } = req.params
+
+  try {
+    const resultado = await pool.query(
+      `
+        SELECT
+          t.id,
+          t.domiciliario_id,
+          d.nombre AS domiciliario,
+          t.fecha,
+          t.hora_inicio,
+          t.hora_fin,
+          t.estado,
+
+          CASE
+            WHEN t.hora_fin IS NOT NULL
+            THEN ROUND(
+              EXTRACT(EPOCH FROM (t.hora_fin - t.hora_inicio)) / 60
+            )
+            ELSE NULL
+          END AS duracion_minutos,
+
+          COUNT(
+            CASE
+              WHEN dom.estado = 'ENTREGADO'
+              THEN 1
+            END
+          ) AS domicilios_entregados,
+
+          (
+            SELECT u.latitud
+            FROM ubicaciones u
+            WHERE u.domiciliario_id = t.domiciliario_id
+              AND u.fecha_hora >= t.hora_inicio
+              AND (
+                t.hora_fin IS NULL
+                OR u.fecha_hora <= t.hora_fin
+              )
+            ORDER BY u.fecha_hora ASC
+            LIMIT 1
+          ) AS inicio_latitud,
+
+          (
+            SELECT u.longitud
+            FROM ubicaciones u
+            WHERE u.domiciliario_id = t.domiciliario_id
+              AND u.fecha_hora >= t.hora_inicio
+              AND (
+                t.hora_fin IS NULL
+                OR u.fecha_hora <= t.hora_fin
+              )
+            ORDER BY u.fecha_hora ASC
+            LIMIT 1
+          ) AS inicio_longitud,
+
+          (
+            SELECT u.latitud
+            FROM ubicaciones u
+            WHERE u.domiciliario_id = t.domiciliario_id
+              AND u.fecha_hora >= t.hora_inicio
+              AND (
+                t.hora_fin IS NULL
+                OR u.fecha_hora <= t.hora_fin
+              )
+            ORDER BY u.fecha_hora DESC
+            LIMIT 1
+          ) AS ultima_latitud,
+
+          (
+            SELECT u.longitud
+            FROM ubicaciones u
+            WHERE u.domiciliario_id = t.domiciliario_id
+              AND u.fecha_hora >= t.hora_inicio
+              AND (
+                t.hora_fin IS NULL
+                OR u.fecha_hora <= t.hora_fin
+              )
+            ORDER BY u.fecha_hora DESC
+            LIMIT 1
+          ) AS ultima_longitud
+
+        FROM turnos t
+
+        INNER JOIN domiciliarios d
+          ON d.id = t.domiciliario_id
+
+        LEFT JOIN domicilios dom
+          ON dom.domiciliario_id = t.domiciliario_id
+          AND dom.entregado_en >= t.hora_inicio
+          AND (
+            t.hora_fin IS NULL
+            OR dom.entregado_en <= t.hora_fin
+          )
+
+        WHERE t.domiciliario_id = $1
+
+        GROUP BY
+          t.id,
+          t.domiciliario_id,
+          d.nombre,
+          t.fecha,
+          t.hora_inicio,
+          t.hora_fin,
+          t.estado
+
+        ORDER BY t.hora_inicio DESC
+      `,
+      [domiciliario_id]
+    )
+
+    res.json(resultado.rows)
+  } catch (error) {
+    console.error('Error consultando historial de turnos:')
+    console.error(error)
+
+    res.status(500).json({
+      mensaje: 'No se pudo consultar el historial de turnos',
+      error: error.message,
+    })
+  }
+})
+
+// ==========================================
+// CALIFICACIONES
+// ==========================================
+
+// ==========================================
+// CREAR CALIFICACIÓN
+// ==========================================
+
+app.post('/api/calificaciones', async (req, res) => {
+  const {
+    domicilio_id,
+    estrellas,
+    observacion,
+  } = req.body
+
+  if (!domicilio_id) {
+    return res.status(400).json({
+      mensaje: 'El domicilio_id es obligatorio',
+    })
+  }
+
+  if (
+    !Number.isInteger(Number(estrellas)) ||
+    Number(estrellas) < 1 ||
+    Number(estrellas) > 5
+  ) {
+    return res.status(400).json({
+      mensaje:
+        'Las estrellas deben ser un número entre 1 y 5',
+    })
+  }
+
+  try {
+    const domicilio = await pool.query(
+      `
+        SELECT
+          d.id,
+          d.estado,
+          d.cliente_id,
+          d.domiciliario_id,
+          d.sede_id
+        FROM domicilios d
+        WHERE d.id = $1
+        LIMIT 1
+      `,
+      [domicilio_id]
+    )
+
+    if (domicilio.rows.length === 0) {
+      return res.status(404).json({
+        mensaje: 'Domicilio no encontrado',
+      })
+    }
+
+    const datos = domicilio.rows[0]
+
+    if (datos.estado !== 'ENTREGADO') {
+      return res.status(400).json({
+        mensaje:
+          'El domicilio debe estar ENTREGADO para poder calificarlo',
+      })
+    }
+
+    const existente = await pool.query(
+      `
+        SELECT id
+        FROM calificaciones
+        WHERE domicilio_id = $1
+        LIMIT 1
+      `,
+      [domicilio_id]
+    )
+
+    if (existente.rows.length > 0) {
+      return res.status(400).json({
+        mensaje:
+          'Este domicilio ya tiene una calificación',
+      })
+    }
+
+    const resultado = await pool.query(
+      `
+        INSERT INTO calificaciones (
+          domicilio_id,
+          cliente_id,
+          domiciliario_id,
+          sede_id,
+          estrellas,
+          observacion
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+      `,
+      [
+        domicilio_id,
+        datos.cliente_id,
+        datos.domiciliario_id,
+        datos.sede_id,
+        Number(estrellas),
+        observacion?.trim() || null,
+      ]
+    )
+
+    res.status(201).json({
+      mensaje:
+        'Calificación registrada correctamente',
+      calificacion:
+        resultado.rows[0],
+    })
+  } catch (error) {
+    console.error(
+      'Error registrando calificación:'
+    )
+    console.error(error)
+
+    res.status(500).json({
+      mensaje:
+        'No se pudo registrar la calificación',
+      error: error.message,
+    })
+  }
+})
+
+// ==========================================
+// CONSULTAR CALIFICACIÓN DE UN DOMICILIO
+// ==========================================
+
+app.get(
+  '/api/calificaciones/domicilio/:domicilio_id',
+  async (req, res) => {
+    const { domicilio_id } = req.params
+
+    try {
+      const resultado = await pool.query(
+        `
+          SELECT
+            c.id,
+            c.domicilio_id,
+            c.cliente_id,
+            c.domiciliario_id,
+            c.sede_id,
+            c.estrellas,
+            c.observacion,
+            c.creado_en,
+
+            cl.nombre AS cliente_nombre,
+            cl.telefono AS cliente_telefono,
+
+            d.nombre AS domiciliario_nombre,
+
+            s.nombre AS sede_nombre
+
+          FROM calificaciones c
+
+          INNER JOIN clientes cl
+            ON cl.id = c.cliente_id
+
+          LEFT JOIN domiciliarios d
+            ON d.id = c.domiciliario_id
+
+          INNER JOIN sedes s
+            ON s.id = c.sede_id
+
+          WHERE c.domicilio_id = $1
+
+          LIMIT 1
+        `,
+        [domicilio_id]
+      )
+
+      if (resultado.rows.length === 0) {
+        return res.status(404).json({
+          mensaje:
+            'Este domicilio todavía no tiene calificación',
+        })
+      }
+
+      res.json(resultado.rows[0])
+    } catch (error) {
+      console.error(
+        'Error consultando calificación:'
+      )
+      console.error(error)
+
+      res.status(500).json({
+        mensaje:
+          'No se pudo consultar la calificación',
+        error: error.message,
+      })
+    }
+  }
+)
+
+// ==========================================
+// OBTENER TODAS LAS CALIFICACIONES
+// ==========================================
+
+app.get('/api/calificaciones', async (req, res) => {
+  try {
+    const resultado = await pool.query(`
+      SELECT
+        c.id,
+        c.domicilio_id,
+        c.estrellas,
+        c.observacion,
+        c.creado_en,
+
+        cl.nombre AS cliente_nombre,
+        cl.telefono AS cliente_telefono,
+
+        d.nombre AS domiciliario_nombre,
+
+        s.nombre AS sede_nombre
+
+      FROM calificaciones c
+
+      INNER JOIN clientes cl
+        ON cl.id = c.cliente_id
+
+      LEFT JOIN domiciliarios d
+        ON d.id = c.domiciliario_id
+
+      INNER JOIN sedes s
+        ON s.id = c.sede_id
+
+      ORDER BY c.creado_en DESC
+    `)
+
+    res.json(resultado.rows)
+  } catch (error) {
+    console.error(
+      'Error consultando calificaciones:'
+    )
+    console.error(error)
+
+    res.status(500).json({
+      mensaje:
+        'No se pudieron consultar las calificaciones',
+      error: error.message,
+    })
+  }
+})
+
+// ==========================================
 // SOCKET.IO - GPS
 // ==========================================
 
@@ -609,20 +1335,56 @@ const ubicacionesDomiciliarios = {}
 io.on('connection', (socket) => {
   console.log('Cliente conectado:', socket.id)
 
-  socket.on('ubicacion_domiciliario', (ubicacion) => {
+  socket.on('ubicacion_domiciliario', async (ubicacion) => {
     console.log('Ubicación recibida:')
     console.log(ubicacion)
 
-    ubicacionesDomiciliarios[
-      ubicacion.domiciliario_id
-    ] = ubicacion
+    try {
+      // ==========================================
+      // VALIDAR QUE EL DOMICILIARIO ESTÉ EN TURNO
+      // ==========================================
 
-    // Enviar ubicación en tiempo real
-    io.emit('ubicacion_actualizada', ubicacion)
+      const turnoActivo = await pool.query(
+        `
+          SELECT id
+          FROM turnos
+          WHERE domiciliario_id = $1
+            AND estado = 'EN TURNO'
+            AND hora_fin IS NULL
+          ORDER BY hora_inicio DESC
+          LIMIT 1
+        `,
+        [ubicacion.domiciliario_id]
+      )
 
-    // Guardar historial GPS en PostgreSQL
-    pool
-      .query(
+      // Si no tiene turno activo, no guardamos ni emitimos el GPS
+      if (turnoActivo.rows.length === 0) {
+        console.log(
+          `GPS ignorado: el domiciliario ${ubicacion.domiciliario_id} no tiene turno activo`
+        )
+
+        return
+      }
+
+      // ==========================================
+      // GUARDAR ÚLTIMA UBICACIÓN EN MEMORIA
+      // ==========================================
+
+      ubicacionesDomiciliarios[
+        ubicacion.domiciliario_id
+      ] = ubicacion
+
+      // ==========================================
+      // ENVIAR UBICACIÓN A LOS CLIENTES CONECTADOS
+      // ==========================================
+
+      io.emit('ubicacion_actualizada', ubicacion)
+
+      // ==========================================
+      // GUARDAR UBICACIÓN EN BASE DE DATOS
+      // ==========================================
+
+      await pool.query(
         `
           INSERT INTO ubicaciones (
             domiciliario_id,
@@ -645,15 +1407,84 @@ io.on('connection', (socket) => {
           ubicacion.fecha_hora || new Date(),
         ]
       )
-      .catch((error) => {
-        console.error('Error guardando ubicación GPS:')
-        console.error(error.message)
-      })
+
+      console.log(
+        `GPS guardado correctamente para domiciliario ${ubicacion.domiciliario_id}`
+      )
+
+    } catch (error) {
+      console.error('Error procesando ubicación GPS:')
+      console.error(error.message)
+    }
   })
 
   socket.on('disconnect', () => {
     console.log('Cliente desconectado:', socket.id)
   })
+})
+
+/* ==========================================
+   ACTUALIZAR UBICACIÓN DE UN DOMICILIO
+========================================== */
+
+app.patch('/api/domicilios/:id/ubicacion', async (req, res) => {
+  const id = Number(req.params.id)
+  const latitud = Number(req.body.latitud)
+  const longitud = Number(req.body.longitud)
+
+  if (
+    !Number.isInteger(id) ||
+    id <= 0 ||
+    req.body.latitud === undefined ||
+    req.body.longitud === undefined ||
+    req.body.latitud === null ||
+    req.body.longitud === null ||
+    req.body.latitud === '' ||
+    req.body.longitud === '' ||
+    !Number.isFinite(latitud) ||
+    !Number.isFinite(longitud) ||
+    latitud < -90 ||
+    latitud > 90 ||
+    longitud < -180 ||
+    longitud > 180
+  ) {
+    return res.status(400).json({
+      mensaje: 'Las coordenadas enviadas no son válidas.',
+    })
+  }
+
+  try {
+    const resultado = await pool.query(
+      `
+        UPDATE domicilios
+        SET latitud = $1,
+            longitud = $2
+        WHERE id = $3
+        RETURNING id, latitud, longitud
+      `,
+      [latitud, longitud, id]
+    )
+
+    if (resultado.rows.length === 0) {
+      return res.status(404).json({
+        mensaje: 'No se encontró el domicilio.',
+      })
+    }
+
+    return res.json({
+      mensaje: 'Ubicación actualizada correctamente.',
+      domicilio: resultado.rows[0],
+    })
+  } catch (error) {
+    console.error(
+      'Error actualizando ubicación del domicilio:',
+      error
+    )
+
+    return res.status(500).json({
+      mensaje: 'No se pudo actualizar la ubicación.',
+    })
+  }
 })
 
 // ==========================================
